@@ -155,7 +155,7 @@ void loop() {
   if (now - lastMsg > 2000) {
     lastMsg = now;
     static int value = 0;
-    snprintf(msg, sizeof(msg), "hello world #%d", ++value);
+    snprintf(msg, sizeof(msg), "READY#%d", ++value);
     client.publish(MQTT_TOPIC_PUB.c_str(), msg);
     Serial.println(msg);
   }

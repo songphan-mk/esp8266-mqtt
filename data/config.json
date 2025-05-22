@@ -6,6 +6,6 @@
   "mqtt_username": "pongpong",
   "mqtt_password": "PongPong420",
   "mqtt_client_id": "ESP8266Client",
-  "mqtt_topic_pub": "testTopic",
-  "mqtt_topic_sub": "testTopic"
+  "mqtt_topic_pub": "monitor-robo-stage",
+  "mqtt_topic_sub": "jobs-mine"
 }
