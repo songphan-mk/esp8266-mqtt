@@ -1,73 +1,94 @@
+#include <FS.h>
+#include <LittleFS.h>
+#include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <time.h>
 
-// ---------- CONFIG START ----------
-const char* WIFI_SSID        = "Ratexx11ST";
-const char* WIFI_PASSWORD    = "pongpong";
-
-const char* MQTT_BROKER      = "7d68279105e7499c9c02e6026dd98b13.s1.eu.hivemq.cloud";
-const int   MQTT_PORT        = 8883;
-const char* MQTT_USERNAME    = "pongpong";
-const char* MQTT_PASSWORD    = "PongPong420";
-const char* MQTT_CLIENT_ID   = "ESP8266Client";
-const char* MQTT_PUB_TOPIC   = "testTopic";
-const char* MQTT_SUB_TOPIC   = "testTopic";
-
-const long  GMT_OFFSET_SEC   = 7 * 3600;  // Thailand (GMT+7)
-const int   NTP_SYNC_TIMEOUT = 10000;     // max wait for NTP sync
-
-const unsigned long RECONNECT_INTERVAL = 5000;
-const unsigned long PUBLISH_INTERVAL   = 2000;
-const unsigned long LED_BLINK_DURATION = 500;
-// ---------- CONFIG END ----------
+// ---------- GLOBAL VARIABLES ----------
+String WIFI_SSID;
+String WIFI_PASSWORD;
+String MQTT_BROKER;
+int    MQTT_PORT;
+String MQTT_USERNAME;
+String MQTT_PASSWORD;
+String MQTT_CLIENT_ID;
+String MQTT_TOPIC_PUB;
+String MQTT_TOPIC_SUB;
 
 WiFiClientSecure espClient;
 PubSubClient client(espClient);
 
+// timing
 unsigned long lastMsg = 0;
 unsigned long lastReconnectAttempt = 0;
 unsigned long lastBlink = 0;
 bool ledState = false;
 char msg[256];
 
+// ---------- LOAD CONFIG FROM FILE ----------
+bool loadConfig() {
+  File configFile = LittleFS.open("/config.json", "r");
+  if (!configFile) {
+    Serial.println("Failed to open config file");
+    return false;
+  }
+
+  StaticJsonDocument<512> doc;
+  DeserializationError error = deserializeJson(doc, configFile);
+  if (error) {
+    Serial.println("Failed to parse config file");
+    return false;
+  }
+
+  WIFI_SSID        = doc["wifi_ssid"].as<String>();
+  WIFI_PASSWORD    = doc["wifi_password"].as<String>();
+  MQTT_BROKER      = doc["mqtt_broker"].as<String>();
+  MQTT_PORT        = doc["mqtt_port"];
+  MQTT_USERNAME    = doc["mqtt_username"].as<String>();
+  MQTT_PASSWORD    = doc["mqtt_password"].as<String>();
+  MQTT_CLIENT_ID   = doc["mqtt_client_id"].as<String>();
+  MQTT_TOPIC_PUB   = doc["mqtt_topic_pub"].as<String>();
+  MQTT_TOPIC_SUB   = doc["mqtt_topic_sub"].as<String>();
+
+  configFile.close();
+  return true;
+}
+
+// ---------- WIFI ----------
 void setup_wifi() {
-  Serial.println();
   Serial.print("Connecting to ");
   Serial.println(WIFI_SSID);
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(WIFI_SSID.c_str(), WIFI_PASSWORD.c_str());
 
   while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
     delay(500);
+    Serial.print(".");
   }
 
-  Serial.println();
-  Serial.println("WiFi connected");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  Serial.println("\nWiFi connected. IP: " + WiFi.localIP().toString());
 }
 
+// ---------- TIME ----------
 void setDateTime() {
-  configTime(GMT_OFFSET_SEC, 0, "pool.ntp.org", "time.nist.gov");
-  Serial.print("Waiting for NTP time sync");
+  configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.print("Waiting for NTP sync");
 
   time_t now = time(nullptr);
-  unsigned long startAttempt = millis();
-  while (now < 8 * 3600 * 2 && millis() - startAttempt < NTP_SYNC_TIMEOUT) {
+  while (now < 8 * 3600 * 2) {
     delay(100);
     Serial.print(".");
     now = time(nullptr);
   }
-  Serial.println();
 
   struct tm timeinfo;
   localtime_r(&now, &timeinfo);
-  Serial.printf("Current time (GMT+7): %s", asctime(&timeinfo));
+  Serial.printf("Time synced: %s", asctime(&timeinfo));
 }
 
+// ---------- MQTT ----------
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
   Serial.print(topic);
@@ -83,56 +104,63 @@ void callback(char* topic, byte* payload, unsigned int length) {
 }
 
 bool reconnect() {
-  if (client.connect(MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD)) {
+  if (client.connect(MQTT_CLIENT_ID.c_str(), MQTT_USERNAME.c_str(), MQTT_PASSWORD.c_str())) {
     Serial.println("MQTT connected");
-    client.publish(MQTT_PUB_TOPIC, "hello from ESP8266");
-    client.subscribe(MQTT_SUB_TOPIC);
+    client.subscribe(MQTT_TOPIC_SUB.c_str());
+    client.publish(MQTT_TOPIC_PUB.c_str(), "hello from ESP8266");
     return true;
   } else {
-    Serial.print("MQTT connect failed, rc=");
+    Serial.print("MQTT failed, rc=");
     Serial.println(client.state());
     return false;
   }
 }
 
+// ---------- SETUP ----------
 void setup() {
   Serial.begin(115200);
   pinMode(LED_BUILTIN, OUTPUT);
+
+  if (!LittleFS.begin()) {
+    Serial.println("LittleFS mount failed");
+    return;
+  }
+
+  if (!loadConfig()) {
+    Serial.println("Load config failed!");
+    return;
+  }
+
   setup_wifi();
   setDateTime();
 
-  espClient.setInsecure();  // ไม่ใช้ certs
-  client.setServer(MQTT_BROKER, MQTT_PORT);
+  espClient.setInsecure(); // No certs
+  client.setServer(MQTT_BROKER.c_str(), MQTT_PORT);
   client.setCallback(callback);
 }
 
+// ---------- LOOP ----------
 void loop() {
   unsigned long now = millis();
 
-  // Reconnect MQTT if needed
   if (!client.connected()) {
-    if (now - lastReconnectAttempt > RECONNECT_INTERVAL) {
+    if (now - lastReconnectAttempt > 5000) {
       lastReconnectAttempt = now;
-      if (reconnect()) {
-        lastReconnectAttempt = 0;
-      }
+      if (reconnect()) lastReconnectAttempt = 0;
     }
   } else {
     client.loop();
   }
 
-  // Publish message periodically
-  if (now - lastMsg > PUBLISH_INTERVAL) {
+  if (now - lastMsg > 2000) {
     lastMsg = now;
     static int value = 0;
     snprintf(msg, sizeof(msg), "hello world #%d", ++value);
-    Serial.print("Publishing message: ");
+    client.publish(MQTT_TOPIC_PUB.c_str(), msg);
     Serial.println(msg);
-    client.publish(MQTT_PUB_TOPIC, msg);
   }
 
-  // LED auto off after blink
-  if (ledState && (now - lastBlink > LED_BLINK_DURATION)) {
+  if (ledState && (now - lastBlink > 500)) {
     digitalWrite(LED_BUILTIN, HIGH);
     ledState = false;
   }

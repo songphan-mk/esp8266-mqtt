@@ -1,0 +1,11 @@
+{
+  "wifi_ssid": "Ratexx11ST",
+  "wifi_password": "pongpong",
+  "mqtt_broker": "7d68279105e7499c9c02e6026dd98b13.s1.eu.hivemq.cloud",
+  "mqtt_port": 8883,
+  "mqtt_username": "pongpong",
+  "mqtt_password": "PongPong420",
+  "mqtt_client_id": "ESP8266Client",
+  "mqtt_topic_pub": "testTopic",
+  "mqtt_topic_sub": "testTopic"
+}
